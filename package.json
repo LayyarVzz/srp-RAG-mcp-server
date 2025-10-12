@@ -1,0 +1,19 @@
+{
+  "name": "srp-rag-mcp-server",
+  "version": "1.0.0",
+  "description": "rag mcp server",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "build": "tsc",
+    "clean": "del dist\\* /s /q",
+    "start": "tsc && node dist/index.js",
+    "start:test": "node dist/index.js"
+  },
+  "dependencies": {
+    "fastmcp": "^3.19.1",
+    "zod": "^3.25.76"
+  }
+}
