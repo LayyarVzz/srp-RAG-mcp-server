@@ -1,5 +1,9 @@
 import { FastMCP } from "fastmcp";
 import { z } from "zod";
+import { config } from 'dotenv';
+import * as path from 'path';
+const rootDir = path.join(__dirname, '../../');
+config({ path: path.join(rootDir, '.env') });
 
 const server = new FastMCP({
     name: "My Server",
