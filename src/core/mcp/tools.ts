@@ -6,61 +6,81 @@ import { FileParser } from '../../utils/FileParser.js';
 import { TextSplitter } from '../../utils/TextSplitter.js';
 import { EmbeddingService } from '../services/EmbeddingService.js';
 import { VectorStoreService } from '../services/VectorStoreService.js';
-
-// 实例化服务
-const embeddingService = new EmbeddingService();
-const vectorStoreService = new VectorStoreService();
+import { FileService } from '../services/FileService.js';
 
 // 注册工具函数
 export function registerTools(server: FastMCP) {
     // 文档入库工具
     server.addTool({
         name: 'ingest_document',
-        description: '上传 PDF/DOCX 并解析入库',
+        description: '上传 PDF/DOCX 并解析入库（支持预签名URL或文件Buffer）',
         parameters: z.object({
-            filePath: z.string().describe("文档文件的绝对路径"),
+            fileUri: z.string().url().optional().describe("文件的预签名URL，用于下载文件"),
+            fileBuffer: z.instanceof(Buffer).optional().describe("文件的二进制数据Buffer"),
+        }).refine(data => data.fileUri || data.fileBuffer, {
+            message: "必须提供fileUri或fileBuffer中的一个"
         }),
         execute: async (param) => {
             try {
-                // 1. 获取文件类型
-                const mimeType = await fileTypeFromFile(param.filePath);
-                if (!mimeType) {
-                    throw new Error("无法识别文件类型");
+                // 0.初始化文件服务
+                await FileService.init();
+                
+                // 1. 获取文件Buffer
+                let fileBuffer: Buffer;
+                if (param.fileUri) {
+                    fileBuffer = await FileService.downloadFromUri(param.fileUri);
+                } else {
+                    fileBuffer = param.fileBuffer!; 
                 }
 
-                // 2. 解析文件为文档对象
-                const documents = await FileParser.parse(param.filePath, mimeType);
+                // 2. 验证文件合法性
+                const { valid, mimeType } = await FileService.validateFile(fileBuffer);
+                if (!valid) {
+                    throw new Error("不支持的文件类型，仅允许PDF和DOCX");
+                }
+                // 若mimeType为空（理论上valid为true时不会出现，此处做双重保障）
+                if (!mimeType) {
+                    throw new Error("文件类型验证异常，无法获取有效MIME类型");
+                }
+
+                // 3. 检查重复文件
+                if (await FileService.isDuplicate(fileBuffer)) {
+                    throw new Error("该文件已上传过，无需重复入库");
+                }
+
+                // 4. 保存文件到本地docs目录
+                const localFilePath = await FileService.saveFile(fileBuffer, mimeType);
+
+                // 5. 文档解析
+                const documents = await FileParser.parse(localFilePath, mimeType);
                 if (documents.length === 0) {
                     throw new Error("文件解析为空内容");
                 }
 
-                // 3. 合并文档内容并切分
+                // 6. 合并文档内容并切分
                 const fullText = documents.map(doc => doc.pageContent).join('\n');
                 const chunks = await TextSplitter.split(fullText);
                 if (chunks.length === 0) {
                     throw new Error("文本切分后无内容");
                 }
 
-                // 4. 生成向量
-                const embeddings = await embeddingService.embedDocuments(chunks);
-
-                // 5. 准备入库数据（添加元数据）
+                // 7. 生成向量并入库
+                const embeddings = await EmbeddingService.embedDocuments(chunks);
                 const docsToStore = chunks.map((content, index) => ({
                     content,
                     embedding: embeddings[index],
                     metadata: {
-                        source: param.filePath,
+                        source: param.fileUri || '直接上传', // 记录原始来源
+                        localPath: localFilePath,
                         chunkIndex: index,
                         totalChunks: chunks.length,
                         pageNumber: documents.find(doc => doc.pageContent.includes(content))?.metadata?.page || '未知'
                     }
                 }));
 
-                // 6. 存入向量数据库
-                const result = await vectorStoreService.addDocuments({ documents: docsToStore });
-
+                const result = await VectorStoreService.addDocuments({ documents: docsToStore });
                 if (result.success) {
-                    return `文档入库成功！路径：${param.filePath}，生成片段数：${chunks.length}，存储ID：${result.ids?.join(',') || '未知'}`;
+                    return `文档入库成功！来源：${param.fileUri || '直接上传'}，生成片段数：${chunks.length}，存储ID：${result.ids?.join(',') || '未知'}`;
                 } else {
                     throw new Error("向量数据库存储失败");
                 }
@@ -81,10 +101,10 @@ export function registerTools(server: FastMCP) {
         execute: async (params) => {
             try {
                 // 1. 生成查询向量
-                const queryEmbedding = await embeddingService.embedQuery(params.query);
+                const queryEmbedding = await EmbeddingService.embedQuery(params.query);
 
                 // 2. 检索相似文档
-                const results = await vectorStoreService.similaritySearch({
+                const results = await VectorStoreService.similaritySearch({
                     queryEmbedding,
                     topK: params.topK
                 });
@@ -120,7 +140,7 @@ export function registerTools(server: FastMCP) {
         }),
         execute: async (params) => {
             try {
-                const stats = await vectorStoreService.getStatistics(params.detail);
+                const stats = await VectorStoreService.getStatistics(params.detail);
                 const result = {
                     统计信息: {
                         总文档数: stats.totalDocuments,

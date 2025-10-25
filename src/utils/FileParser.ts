@@ -1,7 +1,12 @@
-import { PDFLoader } from '@langchain/community/document_loaders/fs/pdf'
-import { DocxLoader } from '@langchain/community/document_loaders/fs/docx'
+import { PDFLoader } from '@langchain/community/document_loaders/fs/pdf';
+import { DocxLoader } from '@langchain/community/document_loaders/fs/docx';
 import { Document } from '@langchain/core/documents';
-import { FileTypeResult } from 'file-type';
+
+// 定义支持的MIME类型
+export type SupportedMimeType = 
+  | 'application/pdf' 
+  | 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+
 
 // 文件解析器，适用于PDF和DOCX
 export class FileParser {
@@ -13,22 +18,24 @@ export class FileParser {
      * - application/vnd.openxmlformats-officedocument.wordprocessingml.document (DOCX 文件)
      * 
      * @param filePath 文件的绝对路径
-     * @param mimeType 文件的 MIME 类型信息，用于确定解析方式
+     * @param mimeType 文件的 MIME 类型字符串，用于确定解析方式
      * @returns 返回解析后的 Document 对象数组
      * @throws 当文件类型不受支持或解析过程中出现错误时抛出异常
      */
-    static async parse(filePath: string, mimeType: FileTypeResult): Promise<Document[]> {
+    static async parse(filePath: string, mimeType: SupportedMimeType): Promise<Document[]> {
         try {
-            switch (mimeType.mime) {
+            switch (mimeType) {
                 case 'application/pdf':
                     return await this.parsePDF(filePath);
                 case 'application/vnd.openxmlformats-officedocument.wordprocessingml.document':
                     return await this.parseDOCX(filePath);
                 default:
-                    throw new Error(`不支持的文件类型${mimeType}`);
+                    // 这里的never类型检查确保所有SupportedMimeType都被覆盖
+                    const _exhaustiveCheck: never = mimeType;
+                    throw new Error(`不支持的文件类型: ${mimeType}`);
             }
         } catch (err) {
-            throw new Error(`文件解析失败${err}`);
+            throw new Error(`文件解析失败: ${(err as Error).message}`);
         }
     }
 
